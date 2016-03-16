@@ -5,7 +5,7 @@
  * As input, ItemsIntent.
  */
 var Rx = require('rx');
-var replicate = require('mvi-example/utils/replicate');
+var replicate = require('../utils/replicate');
 
 var intentAddItem$ = new Rx.Subject();
 var intentRemoveItem$ = new Rx.Subject();

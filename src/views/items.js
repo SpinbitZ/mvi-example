@@ -6,7 +6,7 @@
  */
 var Rx = require('rx');
 var h = require('virtual-hyperscript');
-var replicate = require('mvi-example/utils/replicate');
+var replicate = require('../utils/replicate');
 
 var modelItems$ = new Rx.BehaviorSubject(null);
 var itemWidthChanged$ = new Rx.Subject();

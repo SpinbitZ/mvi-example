@@ -11,7 +11,7 @@ var VDOM = {
   patch: require('virtual-dom/patch')
 };
 var DOMDelegator = require('dom-delegator');
-var ItemsView = require('mvi-example/views/items');
+var ItemsView = require('./views/items');
 
 var delegator;
 

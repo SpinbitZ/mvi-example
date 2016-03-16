@@ -1318,7 +1318,7 @@ function Delegator(opts) {
  * Safe for element IDs and server-side lookups.
  *
  * Extracted from CLCTR
- * 
+ *
  * Copyright (c) Eric Elliott 2012
  * MIT License
  */
@@ -1384,7 +1384,7 @@ function Delegator(opts) {
 
       counter = safeCounter().toString(36).slice(-4);
 
-    return date.slice(-2) + 
+    return date.slice(-2) +
       counter + print + random;
   };
 
@@ -1665,319 +1665,6 @@ function removeEvent(target, type, handler) {
 }
 
 },{"data-set":11}],19:[function(require,module,exports){
-'use strict';
-/*
- * ItemsIntent. Interprets raw user input and outputs model-friendly user
- * intents.
- */
-var Rx = require('rx');
-var replicate = require('mvi-example/utils/replicate');
-
-var inputAddOneClicks$ = new Rx.Subject();
-var inputAddManyClicks$ = new Rx.Subject();
-var inputRemoveClicks$ = new Rx.Subject();
-var inputItemColorChanged$ = new Rx.Subject();
-var inputItemWidthChanged$ = new Rx.Subject();
-
-function observe(ItemsView) {
-  replicate(ItemsView.addOneClicks$, inputAddOneClicks$);
-  replicate(ItemsView.addManyClicks$, inputAddManyClicks$);
-  replicate(ItemsView.removeClicks$, inputRemoveClicks$);
-  replicate(ItemsView.itemColorChanged$, inputItemColorChanged$);
-  replicate(ItemsView.itemWidthChanged$, inputItemWidthChanged$);
-}
-
-var addItem$ = Rx.Observable.merge(
-    inputAddOneClicks$.map(function () { return 1; }),
-    inputAddManyClicks$.map(function () { return 1000; })
-  );
-
-var removeItem$ = inputRemoveClicks$.map(function (clickEvent) {
-  return Number(clickEvent.currentTarget.attributes['data-item-id'].value);
-});
-
-var colorChanged$ = inputItemColorChanged$
-  .map(function (inputEvent) {
-    return {
-      id: Number(inputEvent.currentTarget.attributes['data-item-id'].value),
-      color: inputEvent.currentTarget.value
-    };
-  });
-
-var widthChanged$ = inputItemWidthChanged$
-  .map(function (inputEvent) {
-    return {
-      id: Number(inputEvent.currentTarget.attributes['data-item-id'].value),
-      width: Number(inputEvent.currentTarget.value)
-    };
-  });
-
-module.exports = {
-  observe: observe,
-  addItem$: addItem$,
-  removeItem$: removeItem$,
-  colorChanged$: colorChanged$,
-  widthChanged$: widthChanged$
-};
-
-},{"mvi-example/utils/replicate":23,"rx":27}],20:[function(require,module,exports){
-'use strict';
-/*
- * ItemsModel.
- * As output, Observable of array of item data.
- * As input, ItemsIntent.
- */
-var Rx = require('rx');
-var replicate = require('mvi-example/utils/replicate');
-
-var intentAddItem$ = new Rx.Subject();
-var intentRemoveItem$ = new Rx.Subject();
-var intentWidthChanged$ = new Rx.Subject();
-var intentColorChanged$ = new Rx.Subject();
-
-function observe(ItemsIntent) {
-  replicate(ItemsIntent.addItem$, intentAddItem$);
-  replicate(ItemsIntent.removeItem$, intentRemoveItem$);
-  replicate(ItemsIntent.widthChanged$, intentWidthChanged$);
-  replicate(ItemsIntent.colorChanged$, intentColorChanged$);
-}
-
-function createRandomItem() {
-  var hexColor = Math.floor(Math.random() * 16777215).toString(16);
-  while (hexColor.length < 6) {
-    hexColor = '0' + hexColor;
-  }
-  hexColor = '#' + hexColor;
-  var randomWidth = Math.floor(Math.random() * 800 + 200);
-  return {color: hexColor, width: randomWidth};
-}
-
-function reassignId(item, index) {
-  return {id: index, color: item.color, width: item.width};
-}
-
-var addItemMod$ = intentAddItem$.map(function(amount) {
-  var newItems = [];
-  for (var i = 0; i < amount; i++) {
-    newItems.push(createRandomItem());
-  }
-  return function(listItems) {
-    return listItems.concat(newItems).map(reassignId);
-  };
-});
-
-var removeItemMod$ = intentRemoveItem$.map(function (id) {
-  return function(listItems) {
-    return listItems.filter(function (item) { return item.id !== id; })
-                    .map(reassignId);
-  };
-});
-
-var colorChangedMod$ = intentColorChanged$.map(function(x) {
-  return function(listItems) {
-    listItems[x.id].color = x.color;
-    return listItems;
-  };
-});
-
-var widthChangedMod$ = intentWidthChanged$.map(function (x) {
-  return function(listItems) {
-    listItems[x.id].width = x.width;
-    return listItems;
-  };
-});
-
-var itemModifications = addItemMod$.merge(removeItemMod$).merge(colorChangedMod$).merge(widthChangedMod$);
-
-var items$ = itemModifications.startWith(
-  [{id: 0, color: 'red', width: 300}]
-).scan(function(listItems, modification) {
-  return modification(listItems);
-});
-
-module.exports = {
-  observe: observe,
-  items$: items$
-};
-
-},{"mvi-example/utils/replicate":23,"rx":27}],21:[function(require,module,exports){
-'use strict';
-/*
- * Renderer component.
- * Subscribes to vtree observables of all view components
- * and renders them as real DOM elements to the browser.
- */
-var h = require('virtual-hyperscript');
-var VDOM = {
-  createElement: require('virtual-dom/create-element'),
-  diff: require('virtual-dom/diff'),
-  patch: require('virtual-dom/patch')
-};
-var DOMDelegator = require('dom-delegator');
-var ItemsView = require('mvi-example/views/items');
-
-var delegator;
-
-function renderVTreeStream(vtree$, containerSelector) {
-  // Find and prepare the container
-  var container = window.document.querySelector(containerSelector);
-  if (container === null) {
-    console.error('Couldn\'t render into unknown \'' + containerSelector + '\'');
-    return false;
-  }
-  container.innerHTML = '';
-  // Make the DOM node bound to the VDOM node
-  var rootNode = window.document.createElement('div');
-  container.appendChild(rootNode);
-  vtree$.startWith(h())
-    .bufferWithCount(2, 1)
-    .subscribe(function (buffer) {
-      try {
-        var oldVTree = buffer[0];
-        var newVTree = buffer[1];
-        rootNode = VDOM.patch(rootNode, VDOM.diff(oldVTree, newVTree));
-      } catch (err) {
-        console.error(err);
-      }
-    });
-  return true;
-}
-
-function init() {
-  delegator = new DOMDelegator();
-  renderVTreeStream(ItemsView.vtree$, '.js-container');
-}
-
-module.exports = {
-  init: init
-};
-
-},{"dom-delegator":8,"mvi-example/views/items":24,"virtual-dom/create-element":28,"virtual-dom/diff":29,"virtual-dom/patch":48,"virtual-hyperscript":52}],22:[function(require,module,exports){
-'use strict';
-/*
- * Important Model-View-Intent binding function.
- */
-module.exports = function (model, view, intent) {
-  if (view) { view.observe(model); }
-  if (intent) { intent.observe(view); }
-  if (model) { model.observe(intent); }
-};
-
-},{}],23:[function(require,module,exports){
-'use strict';
-/*
- * Utility functions
- */
-
-/**
- * Forwards all notifications from the source observable to the given subject.
- *
- * @param {Rx.Observable} source the origin observable
- * @param {Rx.Subject} subject the destination subject
- * @return {Rx.Disposable} a disposable generated by a subscribe method
- */
-function replicate(source, subject) {
-  if (typeof source === 'undefined') {
-    throw new Error('Cannot replicate() if source is undefined.');
-  }
-  return source.subscribe(
-    function replicationOnNext(x) {
-      subject.onNext(x);
-    },
-    function replicationOnError(err) {
-      console.error(err);
-    }
-  );
-}
-
-module.exports = replicate;
-
-},{}],24:[function(require,module,exports){
-'use strict';
-/*
- * ItemsView.
- * As output, Observable of vtree (Virtual DOM tree).
- * As input, ItemsModel.
- */
-var Rx = require('rx');
-var h = require('virtual-hyperscript');
-var replicate = require('mvi-example/utils/replicate');
-
-var modelItems$ = new Rx.BehaviorSubject(null);
-var itemWidthChanged$ = new Rx.Subject();
-var itemColorChanged$ = new Rx.Subject();
-var removeClicks$ = new Rx.Subject();
-var addOneClicks$ = new Rx.Subject();
-var addManyClicks$ = new Rx.Subject();
-
-function observe(ItemsModel) {
-  replicate(ItemsModel.items$, modelItems$);
-}
-
-function vrenderTopButtons() {
-  return h('div.topButtons', {}, [
-    h('button',
-      {'ev-click': function (ev) { addOneClicks$.onNext(ev); }},
-      'Add New Item'
-    ),
-    h('button',
-      {'ev-click': function (ev) { addManyClicks$.onNext(ev); }},
-      'Add Many Items'
-    )
-  ]);
-}
-
-function vrenderItem(itemData) {
-  return h('div', {
-    style: {
-      'border': '1px solid #000',
-      'background': 'none repeat scroll 0% 0% ' + itemData.color,
-      'width': itemData.width + 'px',
-      'height': '70px',
-      'display': 'block',
-      'padding': '20px',
-      'margin': '10px 0px'
-    }}, [
-      h('input', {
-        type: 'text', value: itemData.color,
-        'attributes': {'data-item-id': itemData.id},
-        'ev-input': function (ev) { itemColorChanged$.onNext(ev); }
-      }),
-      h('div', [
-        h('input', {
-          type: 'range', min:'200', max:'1000', value: itemData.width,
-          'attributes': {'data-item-id': itemData.id},
-          'ev-input': function (ev) { itemWidthChanged$.onNext(ev); }
-        })
-      ]),
-      h('div', String(itemData.width)),
-      h('button', {
-        'attributes': {'data-item-id': itemData.id},
-        'ev-click': function (ev) { removeClicks$.onNext(ev); }
-      }, 'Remove')
-    ]
-  );
-}
-
-var vtree$ = modelItems$
-  .map(function (itemsData) {
-    return h('div.everything', {}, [
-      vrenderTopButtons(),
-      itemsData.map(vrenderItem)
-    ]);
-  });
-
-module.exports = {
-  observe: observe,
-  vtree$: vtree$,
-  removeClicks$: removeClicks$,
-  addOneClicks$: addOneClicks$,
-  addManyClicks$: addManyClicks$,
-  itemColorChanged$: itemColorChanged$,
-  itemWidthChanged$: itemWidthChanged$
-};
-
-},{"mvi-example/utils/replicate":23,"rx":27,"virtual-hyperscript":52}],25:[function(require,module,exports){
 var process=require("__browserify_process"),global=typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {};// Copyright (c) Microsoft Open Technologies, Inc. All rights reserved. See License.txt in the project root for license information.
 
 ;(function (undefined) {
@@ -11262,7 +10949,7 @@ var process=require("__browserify_process"),global=typeof self !== "undefined" ?
 
 }.call(this));
 
-},{"__browserify_process":5}],26:[function(require,module,exports){
+},{"__browserify_process":5}],20:[function(require,module,exports){
 var global=typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {};// Copyright (c) Microsoft Open Technologies, Inc. All rights reserved. See License.txt in the project root for license information.
 
 ;(function (factory) {
@@ -11744,7 +11431,7 @@ var global=typeof self !== "undefined" ? self : typeof window !== "undefined" ? 
     return Rx;
 }));
 
-},{"./rx.all":25}],27:[function(require,module,exports){
+},{"./rx.all":19}],21:[function(require,module,exports){
 var Rx = require('./dist/rx.all');
 require('./dist/rx.testing');
 
@@ -11919,24 +11606,24 @@ Rx.Node = {
 
 module.exports = Rx;
 
-},{"./dist/rx.all":25,"./dist/rx.testing":26,"events":2}],28:[function(require,module,exports){
+},{"./dist/rx.all":19,"./dist/rx.testing":20,"events":2}],22:[function(require,module,exports){
 var createElement = require("vdom/create-element")
 
 module.exports = createElement
 
-},{"vdom/create-element":32}],29:[function(require,module,exports){
+},{"vdom/create-element":26}],23:[function(require,module,exports){
 var diff = require("vtree/diff")
 
 module.exports = diff
 
-},{"vtree/diff":38}],30:[function(require,module,exports){
+},{"vtree/diff":32}],24:[function(require,module,exports){
 module.exports = isObject
 
 function isObject(x) {
     return typeof x === "object" && x !== null
 }
 
-},{}],31:[function(require,module,exports){
+},{}],25:[function(require,module,exports){
 var isObject = require("is-object")
 var isHook = require("vtree/is-vhook")
 
@@ -12030,7 +11717,7 @@ function getPrototype(value) {
     }
 }
 
-},{"is-object":30,"vtree/is-vhook":41}],32:[function(require,module,exports){
+},{"is-object":24,"vtree/is-vhook":35}],26:[function(require,module,exports){
 var document = require("global/document")
 
 var applyProperties = require("./apply-properties")
@@ -12078,7 +11765,7 @@ function createElement(vnode, opts) {
     return node
 }
 
-},{"./apply-properties":31,"global/document":34,"vtree/handle-thunk":39,"vtree/is-vnode":42,"vtree/is-vtext":43,"vtree/is-widget":44}],33:[function(require,module,exports){
+},{"./apply-properties":25,"global/document":28,"vtree/handle-thunk":33,"vtree/is-vnode":36,"vtree/is-vtext":37,"vtree/is-widget":38}],27:[function(require,module,exports){
 // Maps a virtual DOM tree onto a real DOM tree in an efficient manner.
 // We don't want to read all of the DOM nodes in the tree so we use
 // the in-order tree indexing to eliminate recursion down certain branches.
@@ -12165,9 +11852,9 @@ function ascending(a, b) {
     return a > b ? 1 : -1
 }
 
-},{}],34:[function(require,module,exports){
+},{}],28:[function(require,module,exports){
 module.exports=require(14)
-},{"min-document":4}],35:[function(require,module,exports){
+},{"min-document":4}],29:[function(require,module,exports){
 var applyProperties = require("./apply-properties")
 
 var isWidget = require("vtree/is-widget")
@@ -12337,7 +12024,7 @@ function replaceRoot(oldRoot, newRoot) {
     return newRoot;
 }
 
-},{"./apply-properties":31,"./create-element":32,"./update-widget":37,"vtree/is-widget":44,"vtree/vpatch":46}],36:[function(require,module,exports){
+},{"./apply-properties":25,"./create-element":26,"./update-widget":31,"vtree/is-widget":38,"vtree/vpatch":40}],30:[function(require,module,exports){
 var document = require("global/document")
 var isArray = require("x-is-array")
 
@@ -12415,7 +12102,7 @@ function patchIndices(patches) {
     return indices
 }
 
-},{"./dom-index":33,"./patch-op":35,"global/document":34,"x-is-array":47}],37:[function(require,module,exports){
+},{"./dom-index":27,"./patch-op":29,"global/document":28,"x-is-array":41}],31:[function(require,module,exports){
 var isWidget = require("vtree/is-widget")
 
 module.exports = updateWidget
@@ -12432,7 +12119,7 @@ function updateWidget(a, b) {
     return false
 }
 
-},{"vtree/is-widget":44}],38:[function(require,module,exports){
+},{"vtree/is-widget":38}],32:[function(require,module,exports){
 var isArray = require("x-is-array")
 var isObject = require("is-object")
 
@@ -12779,7 +12466,7 @@ function appendPatch(apply, patch) {
     }
 }
 
-},{"./handle-thunk":39,"./is-thunk":40,"./is-vnode":42,"./is-vtext":43,"./is-widget":44,"./vpatch":46,"is-object":30,"x-is-array":47}],39:[function(require,module,exports){
+},{"./handle-thunk":33,"./is-thunk":34,"./is-vnode":36,"./is-vtext":37,"./is-widget":38,"./vpatch":40,"is-object":24,"x-is-array":41}],33:[function(require,module,exports){
 var isVNode = require("./is-vnode")
 var isVText = require("./is-vtext")
 var isWidget = require("./is-widget")
@@ -12821,14 +12508,14 @@ function renderThunk(thunk, previous) {
     return renderedThunk
 }
 
-},{"./is-thunk":40,"./is-vnode":42,"./is-vtext":43,"./is-widget":44}],40:[function(require,module,exports){
+},{"./is-thunk":34,"./is-vnode":36,"./is-vtext":37,"./is-widget":38}],34:[function(require,module,exports){
 module.exports = isThunk
 
 function isThunk(t) {
     return t && t.type === "Thunk"
 }
 
-},{}],41:[function(require,module,exports){
+},{}],35:[function(require,module,exports){
 module.exports = isHook
 
 function isHook(hook) {
@@ -12836,7 +12523,7 @@ function isHook(hook) {
         !hook.hasOwnProperty("hook")
 }
 
-},{}],42:[function(require,module,exports){
+},{}],36:[function(require,module,exports){
 var version = require("./version")
 
 module.exports = isVirtualNode
@@ -12845,7 +12532,7 @@ function isVirtualNode(x) {
     return x && x.type === "VirtualNode" && x.version === version
 }
 
-},{"./version":45}],43:[function(require,module,exports){
+},{"./version":39}],37:[function(require,module,exports){
 var version = require("./version")
 
 module.exports = isVirtualText
@@ -12854,17 +12541,17 @@ function isVirtualText(x) {
     return x && x.type === "VirtualText" && x.version === version
 }
 
-},{"./version":45}],44:[function(require,module,exports){
+},{"./version":39}],38:[function(require,module,exports){
 module.exports = isWidget
 
 function isWidget(w) {
     return w && w.type === "Widget"
 }
 
-},{}],45:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 module.exports = "1"
 
-},{}],46:[function(require,module,exports){
+},{}],40:[function(require,module,exports){
 var version = require("./version")
 
 VirtualPatch.NONE = 0
@@ -12888,7 +12575,7 @@ function VirtualPatch(type, vNode, patch) {
 VirtualPatch.prototype.version = version
 VirtualPatch.prototype.type = "VirtualPatch"
 
-},{"./version":45}],47:[function(require,module,exports){
+},{"./version":39}],41:[function(require,module,exports){
 var nativeIsArray = Array.isArray
 var toString = Object.prototype.toString
 
@@ -12898,12 +12585,12 @@ function isArray(obj) {
     return toString.call(obj) === "[object Array]"
 }
 
-},{}],48:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 var patch = require("vdom/patch")
 
 module.exports = patch
 
-},{"vdom/patch":36}],49:[function(require,module,exports){
+},{"vdom/patch":30}],43:[function(require,module,exports){
 var DataSet = require("data-set")
 
 module.exports = DataSetHook;
@@ -12923,7 +12610,7 @@ DataSetHook.prototype.hook = function (node, propertyName) {
     ds[propName] = this.value;
 };
 
-},{"data-set":54}],50:[function(require,module,exports){
+},{"data-set":48}],44:[function(require,module,exports){
 var DataSet = require("data-set")
 
 module.exports = DataSetHook;
@@ -12943,7 +12630,7 @@ DataSetHook.prototype.hook = function (node, propertyName) {
     ds[propName] = this.value;
 };
 
-},{"data-set":54}],51:[function(require,module,exports){
+},{"data-set":48}],45:[function(require,module,exports){
 module.exports = SoftSetHook;
 
 function SoftSetHook(value) {
@@ -12960,7 +12647,7 @@ SoftSetHook.prototype.hook = function (node, propertyName) {
     }
 };
 
-},{}],52:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 var VNode = require("vtree/vnode.js")
 var VText = require("vtree/vtext.js")
 var isVNode = require("vtree/is-vnode")
@@ -13088,17 +12775,17 @@ function isChildren(x) {
     return typeof x === "string" || Array.isArray(x) || isChild(x)
 }
 
-},{"./hooks/data-set-hook.js":49,"./hooks/ev-hook.js":50,"./hooks/soft-set-hook.js":51,"./parse-tag.js":70,"error/typed":61,"vtree/is-thunk":62,"vtree/is-vhook":63,"vtree/is-vnode":64,"vtree/is-vtext":65,"vtree/is-widget":66,"vtree/vnode.js":68,"vtree/vtext.js":69}],53:[function(require,module,exports){
+},{"./hooks/data-set-hook.js":43,"./hooks/ev-hook.js":44,"./hooks/soft-set-hook.js":45,"./parse-tag.js":64,"error/typed":55,"vtree/is-thunk":56,"vtree/is-vhook":57,"vtree/is-vnode":58,"vtree/is-vtext":59,"vtree/is-widget":60,"vtree/vnode.js":62,"vtree/vtext.js":63}],47:[function(require,module,exports){
 module.exports=require(10)
-},{}],54:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
 arguments[4][11][0].apply(exports,arguments)
-},{"./create-hash.js":53,"individual":55,"weakmap-shim/create-store":56}],55:[function(require,module,exports){
+},{"./create-hash.js":47,"individual":49,"weakmap-shim/create-store":50}],49:[function(require,module,exports){
 module.exports=require(15)
-},{}],56:[function(require,module,exports){
+},{}],50:[function(require,module,exports){
 module.exports=require(12)
-},{"./hidden-store.js":57}],57:[function(require,module,exports){
+},{"./hidden-store.js":51}],51:[function(require,module,exports){
 module.exports=require(13)
-},{}],58:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 module.exports = function(obj) {
     if (typeof obj === 'string') return camelCase(obj);
     return walk(obj);
@@ -13159,7 +12846,7 @@ function reduce (xs, f, acc) {
     return acc;
 }
 
-},{}],59:[function(require,module,exports){
+},{}],53:[function(require,module,exports){
 var nargs = /\{([0-9a-zA-Z]+)\}/g
 var slice = Array.prototype.slice
 
@@ -13195,15 +12882,17 @@ function template(string) {
     })
 }
 
-},{}],60:[function(require,module,exports){
+},{}],54:[function(require,module,exports){
 module.exports = extend
+
+var hasOwnProperty = Object.prototype.hasOwnProperty;
 
 function extend(target) {
     for (var i = 1; i < arguments.length; i++) {
         var source = arguments[i]
 
         for (var key in source) {
-            if (source.hasOwnProperty(key)) {
+            if (hasOwnProperty.call(source, key)) {
                 target[key] = source[key]
             }
         }
@@ -13212,7 +12901,7 @@ function extend(target) {
     return target
 }
 
-},{}],61:[function(require,module,exports){
+},{}],55:[function(require,module,exports){
 var camelize = require("camelize")
 var template = require("string-template")
 var extend = require("xtend/mutable")
@@ -13237,7 +12926,7 @@ function TypedError(args) {
         args.name = errorName[0].toUpperCase() + errorName.substr(1)
     }
 
-    createError.type = args.type;
+    extend(createError, args);
     createError._name = args.name;
 
     return createError;
@@ -13262,19 +12951,19 @@ function TypedError(args) {
 }
 
 
-},{"camelize":58,"string-template":59,"xtend/mutable":60}],62:[function(require,module,exports){
-module.exports=require(40)
-},{}],63:[function(require,module,exports){
-module.exports=require(41)
-},{}],64:[function(require,module,exports){
-module.exports=require(42)
-},{"./version":67}],65:[function(require,module,exports){
-module.exports=require(43)
-},{"./version":67}],66:[function(require,module,exports){
-module.exports=require(44)
-},{}],67:[function(require,module,exports){
-module.exports=require(45)
-},{}],68:[function(require,module,exports){
+},{"camelize":52,"string-template":53,"xtend/mutable":54}],56:[function(require,module,exports){
+module.exports=require(34)
+},{}],57:[function(require,module,exports){
+module.exports=require(35)
+},{}],58:[function(require,module,exports){
+module.exports=require(36)
+},{"./version":61}],59:[function(require,module,exports){
+module.exports=require(37)
+},{"./version":61}],60:[function(require,module,exports){
+module.exports=require(38)
+},{}],61:[function(require,module,exports){
+module.exports=require(39)
+},{}],62:[function(require,module,exports){
 var version = require("./version")
 var isVNode = require("./is-vnode")
 var isWidget = require("./is-widget")
@@ -13339,7 +13028,7 @@ function VirtualNode(tagName, properties, children, key, namespace) {
 VirtualNode.prototype.version = version
 VirtualNode.prototype.type = "VirtualNode"
 
-},{"./is-vhook":63,"./is-vnode":64,"./is-widget":66,"./version":67}],69:[function(require,module,exports){
+},{"./is-vhook":57,"./is-vnode":58,"./is-widget":60,"./version":61}],63:[function(require,module,exports){
 var version = require("./version")
 
 module.exports = VirtualText
@@ -13351,7 +13040,7 @@ function VirtualText(text) {
 VirtualText.prototype.version = version
 VirtualText.prototype.type = "VirtualText"
 
-},{"./version":67}],70:[function(require,module,exports){
+},{"./version":61}],64:[function(require,module,exports){
 var classIdSplit = /([\.#]?[a-zA-Z0-9_:-]+)/
 var notClassId = /^\.|#/
 
@@ -13402,18 +13091,331 @@ function parseTag(tag, props) {
     return tagName ? tagName.toLowerCase() : "div"
 }
 
-},{}],71:[function(require,module,exports){
+},{}],65:[function(require,module,exports){
 'use strict';
-var binder = require('mvi-example/utils/binder');
-var renderer = require('mvi-example/renderer');
-var ItemsModel = require('mvi-example/models/items');
-var ItemsView = require('mvi-example/views/items');
-var ItemsIntent = require('mvi-example/intents/items');
+var binder = require('./utils/binder');
+var renderer = require('./renderer');
+var ItemsModel = require('./models/items');
+var ItemsView = require('./views/items');
+var ItemsIntent = require('./intents/items');
 
 window.onload = function () {
   binder(ItemsModel, ItemsView, ItemsIntent);
   renderer.init();
 };
 
-},{"mvi-example/intents/items":19,"mvi-example/models/items":20,"mvi-example/renderer":21,"mvi-example/utils/binder":22,"mvi-example/views/items":24}]},{},[71])
+},{"./intents/items":66,"./models/items":67,"./renderer":68,"./utils/binder":69,"./views/items":71}],66:[function(require,module,exports){
+'use strict';
+/*
+ * ItemsIntent. Interprets raw user input and outputs model-friendly user
+ * intents.
+ */
+var Rx = require('rx');
+var replicate = require('../utils/replicate');
+
+var inputAddOneClicks$ = new Rx.Subject();
+var inputAddManyClicks$ = new Rx.Subject();
+var inputRemoveClicks$ = new Rx.Subject();
+var inputItemColorChanged$ = new Rx.Subject();
+var inputItemWidthChanged$ = new Rx.Subject();
+
+function observe(ItemsView) {
+  replicate(ItemsView.addOneClicks$, inputAddOneClicks$);
+  replicate(ItemsView.addManyClicks$, inputAddManyClicks$);
+  replicate(ItemsView.removeClicks$, inputRemoveClicks$);
+  replicate(ItemsView.itemColorChanged$, inputItemColorChanged$);
+  replicate(ItemsView.itemWidthChanged$, inputItemWidthChanged$);
+}
+
+var addItem$ = Rx.Observable.merge(
+    inputAddOneClicks$.map(function () { return 1; }),
+    inputAddManyClicks$.map(function () { return 1000; })
+  );
+
+var removeItem$ = inputRemoveClicks$.map(function (clickEvent) {
+  return Number(clickEvent.currentTarget.attributes['data-item-id'].value);
+});
+
+var colorChanged$ = inputItemColorChanged$
+  .map(function (inputEvent) {
+    return {
+      id: Number(inputEvent.currentTarget.attributes['data-item-id'].value),
+      color: inputEvent.currentTarget.value
+    };
+  });
+
+var widthChanged$ = inputItemWidthChanged$
+  .map(function (inputEvent) {
+    return {
+      id: Number(inputEvent.currentTarget.attributes['data-item-id'].value),
+      width: Number(inputEvent.currentTarget.value)
+    };
+  });
+
+module.exports = {
+  observe: observe,
+  addItem$: addItem$,
+  removeItem$: removeItem$,
+  colorChanged$: colorChanged$,
+  widthChanged$: widthChanged$
+};
+
+},{"../utils/replicate":70,"rx":21}],67:[function(require,module,exports){
+'use strict';
+/*
+ * ItemsModel.
+ * As output, Observable of array of item data.
+ * As input, ItemsIntent.
+ */
+var Rx = require('rx');
+var replicate = require('../utils/replicate');
+
+var intentAddItem$ = new Rx.Subject();
+var intentRemoveItem$ = new Rx.Subject();
+var intentWidthChanged$ = new Rx.Subject();
+var intentColorChanged$ = new Rx.Subject();
+
+function observe(ItemsIntent) {
+  replicate(ItemsIntent.addItem$, intentAddItem$);
+  replicate(ItemsIntent.removeItem$, intentRemoveItem$);
+  replicate(ItemsIntent.widthChanged$, intentWidthChanged$);
+  replicate(ItemsIntent.colorChanged$, intentColorChanged$);
+}
+
+function createRandomItem() {
+  var hexColor = Math.floor(Math.random() * 16777215).toString(16);
+  while (hexColor.length < 6) {
+    hexColor = '0' + hexColor;
+  }
+  hexColor = '#' + hexColor;
+  var randomWidth = Math.floor(Math.random() * 800 + 200);
+  return {color: hexColor, width: randomWidth};
+}
+
+function reassignId(item, index) {
+  return {id: index, color: item.color, width: item.width};
+}
+
+var addItemMod$ = intentAddItem$.map(function(amount) {
+  var newItems = [];
+  for (var i = 0; i < amount; i++) {
+    newItems.push(createRandomItem());
+  }
+  return function(listItems) {
+    return listItems.concat(newItems).map(reassignId);
+  };
+});
+
+var removeItemMod$ = intentRemoveItem$.map(function (id) {
+  return function(listItems) {
+    return listItems.filter(function (item) { return item.id !== id; })
+                    .map(reassignId);
+  };
+});
+
+var colorChangedMod$ = intentColorChanged$.map(function(x) {
+  return function(listItems) {
+    listItems[x.id].color = x.color;
+    return listItems;
+  };
+});
+
+var widthChangedMod$ = intentWidthChanged$.map(function (x) {
+  return function(listItems) {
+    listItems[x.id].width = x.width;
+    return listItems;
+  };
+});
+
+var itemModifications = addItemMod$.merge(removeItemMod$).merge(colorChangedMod$).merge(widthChangedMod$);
+
+var items$ = itemModifications.startWith(
+  [{id: 0, color: 'red', width: 300}]
+).scan(function(listItems, modification) {
+  return modification(listItems);
+});
+
+module.exports = {
+  observe: observe,
+  items$: items$
+};
+
+},{"../utils/replicate":70,"rx":21}],68:[function(require,module,exports){
+'use strict';
+/*
+ * Renderer component.
+ * Subscribes to vtree observables of all view components
+ * and renders them as real DOM elements to the browser.
+ */
+var h = require('virtual-hyperscript');
+var VDOM = {
+  createElement: require('virtual-dom/create-element'),
+  diff: require('virtual-dom/diff'),
+  patch: require('virtual-dom/patch')
+};
+var DOMDelegator = require('dom-delegator');
+var ItemsView = require('./views/items');
+
+var delegator;
+
+function renderVTreeStream(vtree$, containerSelector) {
+  // Find and prepare the container
+  var container = window.document.querySelector(containerSelector);
+  if (container === null) {
+    console.error('Couldn\'t render into unknown \'' + containerSelector + '\'');
+    return false;
+  }
+  container.innerHTML = '';
+  // Make the DOM node bound to the VDOM node
+  var rootNode = window.document.createElement('div');
+  container.appendChild(rootNode);
+  vtree$.startWith(h())
+    .bufferWithCount(2, 1)
+    .subscribe(function (buffer) {
+      try {
+        var oldVTree = buffer[0];
+        var newVTree = buffer[1];
+        rootNode = VDOM.patch(rootNode, VDOM.diff(oldVTree, newVTree));
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  return true;
+}
+
+function init() {
+  delegator = new DOMDelegator();
+  renderVTreeStream(ItemsView.vtree$, '.js-container');
+}
+
+module.exports = {
+  init: init
+};
+
+},{"./views/items":71,"dom-delegator":8,"virtual-dom/create-element":22,"virtual-dom/diff":23,"virtual-dom/patch":42,"virtual-hyperscript":46}],69:[function(require,module,exports){
+'use strict';
+/*
+ * Important Model-View-Intent binding function.
+ */
+module.exports = function (model, view, intent) {
+  if (view) { view.observe(model); }
+  if (intent) { intent.observe(view); }
+  if (model) { model.observe(intent); }
+};
+
+},{}],70:[function(require,module,exports){
+'use strict';
+/*
+ * Utility functions
+ */
+
+/**
+ * Forwards all notifications from the source observable to the given subject.
+ *
+ * @param {Rx.Observable} source the origin observable
+ * @param {Rx.Subject} subject the destination subject
+ * @return {Rx.Disposable} a disposable generated by a subscribe method
+ */
+function replicate(source, subject) {
+  if (typeof source === 'undefined') {
+    throw new Error('Cannot replicate() if source is undefined.');
+  }
+  return source.subscribe(
+    function replicationOnNext(x) {
+      subject.onNext(x);
+    },
+    function replicationOnError(err) {
+      console.error(err);
+    }
+  );
+}
+
+module.exports = replicate;
+
+},{}],71:[function(require,module,exports){
+'use strict';
+/*
+ * ItemsView.
+ * As output, Observable of vtree (Virtual DOM tree).
+ * As input, ItemsModel.
+ */
+var Rx = require('rx');
+var h = require('virtual-hyperscript');
+var replicate = require('../utils/replicate');
+
+var modelItems$ = new Rx.BehaviorSubject(null);
+var itemWidthChanged$ = new Rx.Subject();
+var itemColorChanged$ = new Rx.Subject();
+var removeClicks$ = new Rx.Subject();
+var addOneClicks$ = new Rx.Subject();
+var addManyClicks$ = new Rx.Subject();
+
+function observe(ItemsModel) {
+  replicate(ItemsModel.items$, modelItems$);
+}
+
+function vrenderTopButtons() {
+  return h('div.topButtons', {}, [
+    h('button',
+      {'ev-click': function (ev) { addOneClicks$.onNext(ev); }},
+      'Add New Item'
+    ),
+    h('button',
+      {'ev-click': function (ev) { addManyClicks$.onNext(ev); }},
+      'Add Many Items'
+    )
+  ]);
+}
+
+function vrenderItem(itemData) {
+  return h('div', {
+    style: {
+      'border': '1px solid #000',
+      'background': 'none repeat scroll 0% 0% ' + itemData.color,
+      'width': itemData.width + 'px',
+      'height': '70px',
+      'display': 'block',
+      'padding': '20px',
+      'margin': '10px 0px'
+    }}, [
+      h('input', {
+        type: 'text', value: itemData.color,
+        'attributes': {'data-item-id': itemData.id},
+        'ev-input': function (ev) { itemColorChanged$.onNext(ev); }
+      }),
+      h('div', [
+        h('input', {
+          type: 'range', min:'200', max:'1000', value: itemData.width,
+          'attributes': {'data-item-id': itemData.id},
+          'ev-input': function (ev) { itemWidthChanged$.onNext(ev); }
+        })
+      ]),
+      h('div', String(itemData.width)),
+      h('button', {
+        'attributes': {'data-item-id': itemData.id},
+        'ev-click': function (ev) { removeClicks$.onNext(ev); }
+      }, 'Remove')
+    ]
+  );
+}
+
+var vtree$ = modelItems$
+  .map(function (itemsData) {
+    return h('div.everything', {}, [
+      vrenderTopButtons(),
+      itemsData.map(vrenderItem)
+    ]);
+  });
+
+module.exports = {
+  observe: observe,
+  vtree$: vtree$,
+  removeClicks$: removeClicks$,
+  addOneClicks$: addOneClicks$,
+  addManyClicks$: addManyClicks$,
+  itemColorChanged$: itemColorChanged$,
+  itemWidthChanged$: itemWidthChanged$
+};
+
+},{"../utils/replicate":70,"rx":21,"virtual-hyperscript":46}]},{},[65])
 ;

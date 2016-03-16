@@ -4,7 +4,7 @@
  * intents.
  */
 var Rx = require('rx');
-var replicate = require('mvi-example/utils/replicate');
+var replicate = require('../utils/replicate');
 
 var inputAddOneClicks$ = new Rx.Subject();
 var inputAddManyClicks$ = new Rx.Subject();
